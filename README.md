@@ -52,6 +52,23 @@ curl http://localhost:8080
 curl http://localhost:8080/odata/v4/CatalogService/Books | jq
 ```
 
+### Build optimized JRE (jlink)
+
+```bash
+# For convenience, cd into the build directory
+cd srv/target
+# Unpack the jar so we can analyze the Java modules needed by our app's dependencies
+jar xf demoapp.jar
+# Identify the Java modules needed by our app and it's dependencies
+jdeps --ignore-missing-deps -q --recursive --multi-release 21 --print-module-deps --class-path 'BOOT-INF/lib/*' demoapp.jar > deps.info
+# Build an optimized version of the SAPMachine JRE with just the dependencies our app needs
+jlink --add-modules $(cat deps.info) --strip-debug --no-header-files --no-man-pages --output ./tinysapmachine
+# Show that our smaller JRE can run our app
+./tinysapmachine/bin/java -jar demoapp.jar
+```
+
+With this we slimmed down the ~150 MiB JRE to about ~86 MiB (values might be different on your system, depending on your operating system and which dependencies your application has).
+
 ### Publishing the app
 
 ```bash
