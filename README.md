@@ -69,6 +69,72 @@ jlink --add-modules $(cat deps.info) --strip-debug --no-header-files --no-man-pa
 
 With this we slimmed down the ~150 MiB JRE to about ~86 MiB (values might be different on your system, depending on your operating system and which dependencies your application has).
 
+### Build a bare container image
+
+A bare container image is a container image with all parts of the operating system stripped out that you don't need.
+To get started with building your bare container image, build an container image with the stripped JRE first like in this example `Containerfile`:
+
+```Dockerfile
+FROM ghcr.io/sap/sapmachine:21-jdk-headless-gl-1592 as build
+RUN apt-get update -q && apt-get install -y binutils
+RUN mkdir /usr/src/demoapp
+COPY . /usr/src/demoapp
+WORKDIR /usr/src/demoapp
+COPY srv/target/demoapp.jar demoapp.jar
+RUN jar xf demoapp.jar
+RUN jdeps --ignore-missing-deps -q  \
+    --recursive  \
+    --multi-release 21  \
+    --print-module-deps  \
+    --class-path 'BOOT-INF/lib/*'  \
+    demoapp.jar > deps.info
+RUN jlink \
+    --add-modules $(cat deps.info) \
+    --strip-debug \
+    --no-header-files \
+    --no-man-pages \
+    --output /tinysapmachine
+
+FROM ghcr.io/gardenlinux/gardenlinux:1592
+
+EXPOSE 8080
+
+COPY --from=build /tinysapmachine /jre
+COPY --from=build /usr/src/demoapp/demoapp.jar /
+
+CMD ["/jre/bin/java", "-jar", "/demoapp.jar"]
+```
+
+The procedure to build your bare container image is as follows:
+
+```bash
+# Download the latest release of the unbase_oci shell script
+wget https://github.com/gardenlinux/unbase_oci/releases/download/latest/unbase_oci
+# make sure it is executable
+chmod +x unbase_oci
+
+# Pull the base image which is needed by unbase_oci to compute the diff
+# This needs to be same image you use in the last 'FROM' statement in your Containerfile
+SHA_GL=$(podman pull -q ghcr.io/gardenlinux/gardenlinux:1592)
+
+# Build your app's container image and save the image sha sum
+SHA_MYAPP=$(podman build -q -t myapp .)
+
+# Let unbase_oci do its magic. You will get an image called myapp:latest_bare that is much smaller
+./unbase_oci --ldd-dependencies podman:"$SHA_GL" podman:"$SHA_MYAPP" podman:myapp:latest_bare
+```
+
+Now if you run `podman images` you should be able to see both your original container image next to your bare image:
+
+```
+podman images
+REPOSITORY        TAG          IMAGE ID      CREATED             SIZE
+localhost/myapp   latest_bare  dfc66ec39aa9  6 seconds ago       149 MB
+localhost/myapp   latest       ae50705013bf  About a minute ago  256 MB
+```
+
+As we can see, unbase oci cut our image size almost in half.
+
 ### Publishing the app
 
 ```bash
